@@ -813,10 +813,12 @@
                 } catch (readyError) {
                     console.error("Error waiting for book to be ready:", readyError);
                     // Try to get more specific error information
-                    if (readyError.message && readyError.message.includes('container.xml')) {
-                        throw new Error('الملف لا يحتوي على بنية EPUB صحيحة. تأكد من أن الملف هو ملف EPUB صالح.');
+                    if (readyError.message && readyError.message.toLowerCase().includes('mime type')) {
+                        throw new Error('نوع الملف غير مدعوم. يرجى التأكد من أن الملف هو ملف EPUB.');
+                    } else if (readyError.message && readyError.message.includes('container.xml')) {
+                        throw new Error('الملف لا يحتوي على بنية EPUB صحيحة (ملف container.xml مفقود أو تالف).');
                     } else if (readyError.message && readyError.message.includes('404')) {
-                        throw new Error('الملف تالف أو غير مكتمل. تأكد من أن الملف تم تحميله بشكل صحيح.');
+                        throw new Error('الملف تالف أو غير مكتمل (فشل في العثور على بعض مكونات الكتاب).');
                     } else {
                         throw new Error(`فشل في تحميل الكتاب: ${readyError.message}`);
                     }
@@ -1160,6 +1162,21 @@
                             console.warn('Image failed to load:', img.src);
                         });
                     });
+
+                    const lazyImageObserver = new IntersectionObserver((entries, observer) => {
+                        entries.forEach(entry => {
+                            if (entry.isIntersecting) {
+                                const lazyImage = entry.target;
+                                lazyImage.src = lazyImage.dataset.src;
+                                lazyImageObserver.unobserve(lazyImage);
+                            }
+                        });
+                    });
+
+                    images.forEach(lazyImage => {
+                        lazyImageObserver.observe(lazyImage);
+                    });
+
                 } catch (e) {
                     console.warn("Error setting up images:", e);
                 }
@@ -1171,8 +1188,8 @@
                 viewer.addEventListener('scroll', () => {
                     const scrollPercentage = (viewer.scrollTop / (viewer.scrollHeight - viewer.clientHeight)) * 100;
                     
-                    // إذا وصل المستخدم إلى 80% من المحتوى، قم بتحميل المزيد
-                    if (scrollPercentage > 80) {
+                    // إذا وصل المستخدم إلى 60% من المحتوى، قم بتحميل المزيد
+                    if (scrollPercentage > 60) {
                         console.log('Loading more content...');
                         // محاولة تحميل المزيد من المحتوى
                         try {
@@ -1186,27 +1203,6 @@
                 });
             }
 
-            // إضافة event listener لتحميل جميع المحتوى عند بدء التمرير
-            setTimeout(() => {
-                try {
-                    console.log('Pre-loading content for scrolled mode...');
-                    // محاولة تحميل المزيد من المحتوى مسبقاً
-                    if (rendition && rendition.manager && typeof rendition.manager.next === 'function') {
-                        // تحميل عدة صفحات مسبقاً
-                        for (let i = 0; i < 3; i++) {
-                            setTimeout(() => {
-                                try {
-                                    rendition.manager.next();
-                                } catch (e) {
-                                    // تجاهل الأخطاء بعد تحميل جميع المحتوى
-                                }
-                            }, i * 1000);
-                        }
-                    }
-                } catch (e) {
-                    console.warn('Error pre-loading content:', e);
-                }
-            }, 3000);
         }
 
         // Font Functions
@@ -1389,6 +1385,10 @@
                             img.style.display = 'block';
                             img.style.margin = '20px auto';
                             img.style.objectFit = 'contain';
+                        if(img.src) {
+                            img.dataset.src = img.src;
+                            img.src = "";
+                        }
                         });
                         
                         // تحسين عرض النص
