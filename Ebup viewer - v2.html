@@ -1,0 +1,1654 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EPUB Viewer - قارئ كتب إلكتروني</title>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js"></script>
+    <script>
+        // Fix for ResizeObserver loop limit exceeded
+        const resizeObserverLoopErrRe = /^ResizeObserver loop limit exceeded/;
+        window.addEventListener('error', function(e) {
+            if (resizeObserverLoopErrRe.test(e.message)) {
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+            }
+        });
+    </script>
+    <style>
+        :root {
+            --bg-color: #f8f9fa;
+            --text-color: #2c3e50;
+            --header-bg: #ffffff;
+            --border-color: #e0e0e0;
+            --footer-bg: rgba(255, 255, 255, 0.95);
+            --header-height: 60px;
+            --footer-height: 80px;
+            --primary-color: #4361ee;
+            --hover-color: #3a56d4;
+            --success-color: #2ecc71;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            margin: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            touch-action: manipulation;
+        }
+
+        body.rtl {
+            direction: rtl;
+        }
+
+        #header {
+            height: var(--header-height);
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            background: var(--header-bg);
+            border-bottom: 1px solid var(--border-color);
+            gap: 15px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+            z-index: 1001;
+            position: relative;
+        }
+
+        #bookTitle {
+            font-weight: 700;
+            font-size: 18px;
+            flex-grow: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            padding: 0 10px;
+            color: var(--primary-color);
+        }
+
+        .header-controls {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .control-btn {
+            background-color: #fff;
+            border: 1px solid var(--border-color);
+            color: var(--text-color);
+            padding: 8px 15px;
+            cursor: pointer;
+            border-radius: 6px;
+            font-size: 15px;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 40px;
+            font-weight: 600;
+        }
+
+        .control-btn:hover:not(:disabled) {
+            background-color: #f5f7ff;
+            border-color: var(--primary-color);
+            color: var(--primary-color);
+            transform: translateY(-2px);
+            box-shadow: 0 3px 8px rgba(67, 97, 238, 0.2);
+        }
+
+        .control-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .font-controls {
+            display: flex;
+            border-radius: 6px;
+            overflow: hidden;
+            border: 1px solid var(--border-color);
+        }
+
+        .font-controls .control-btn {
+            border-radius: 0;
+            border: none;
+            border-right: 1px solid var(--border-color);
+        }
+
+        .font-controls .control-btn:last-child {
+            border-right: none;
+        }
+
+        .viewer-container {
+            position: relative;
+            flex-grow: 1;
+            overflow: hidden;
+        }
+
+        #viewer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            border: none;
+            background: #fff;
+            overflow-y: auto;
+            transition: opacity 0.3s ease;
+            box-sizing: border-box;
+        }
+
+        #footer {
+            height: var(--footer-height);
+            background-color: var(--footer-bg);
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: opacity 0.3s ease;
+            padding: 0 20px;
+        }
+
+        #footer.fade-out {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .footer-content {
+            width: 100%;
+            max-width: 800px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .footer-nav {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 100%;
+            gap: 30px;
+        }
+
+        .nav-arrow {
+            background: var(--primary-color);
+            border: none;
+            color: white;
+            font-size: 24px;
+            padding: 15px;
+            cursor: pointer;
+            border-radius: 50%;
+            transition: all 0.2s;
+            width: 60px;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            position: relative;
+        }
+
+        .nav-arrow:hover {
+            background: var(--hover-color);
+            transform: scale(1.05);
+        }
+
+        .nav-arrow:active {
+            transform: scale(0.95);
+        }
+
+        .nav-arrow:disabled {
+            background: #b0b0b0;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .nav-arrow {
+            position: relative;
+        }
+
+        .nav-arrow::before {
+            content: attr(data-tooltip);
+            position: absolute;
+            bottom: -35px;
+            left: 50%;
+            transform: translateX(-50%);
+            white-space: nowrap;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 6px 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+            z-index: 1000;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            visibility: hidden;
+        }
+
+        .nav-arrow:hover::before {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        #fileInput {
+            display: none;
+        }
+
+        .file-label {
+            background: var(--primary-color);
+            color: white;
+            border-radius: 6px;
+            padding: 10px 20px;
+            cursor: pointer;
+            transition: background 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 600;
+            box-shadow: 0 3px 8px rgba(67, 97, 238, 0.3);
+        }
+
+        .file-label:hover {
+            background: var(--hover-color);
+            transform: translateY(-2px);
+        }
+
+        .progress-container {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 255, 255, 0.95);
+            padding: 25px 40px;
+            border-radius: 15px;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2);
+            text-align: center;
+            z-index: 100;
+            display: none;
+        }
+
+        .progress-bar {
+            width: 300px;
+            height: 12px;
+            background: #e0e0e0;
+            border-radius: 6px;
+            margin: 20px 0;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: var(--success-color);
+            width: 0%;
+            border-radius: 6px;
+            transition: width 0.3s ease;
+        }
+
+        .progress-text {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: var(--primary-color);
+        }
+
+        .progress-percent {
+            font-size: 16px;
+            font-weight: 600;
+            color: #7f8c8d;
+        }
+
+        .status-bar {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 8px 20px;
+            border-radius: 20px;
+            font-size: 14px;
+            z-index: 50;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .status-bar.show {
+            opacity: 1;
+        }
+
+        .toc-container {
+            position: absolute;
+            top: var(--header-height);
+            left: 0;
+            width: 300px;
+            height: calc(100% - var(--header-height) - var(--footer-height));
+            background: white;
+            z-index: 1000;
+            box-shadow: 5px 0 15px rgba(0, 0, 0, 0.1);
+            overflow-y: auto;
+            transform: translateX(-100%);
+            transition: transform 0.3s ease;
+            padding: 20px;
+            direction: ltr;
+        }
+
+        .toc-container.show {
+            transform: translateX(0);
+        }
+
+        .toc-item {
+            padding: 8px 0;
+            cursor: pointer;
+            border-bottom: 1px solid #eee;
+        }
+
+        .toc-item:hover {
+            color: var(--primary-color);
+        }
+
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 999;
+            display: none;
+        }
+
+        .overlay.show {
+            display: block;
+        }
+
+        .chapter-info {
+            position: absolute;
+            bottom: calc(var(--footer-height) + 20px);
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 8px 20px;
+            border-radius: 20px;
+            font-size: 14px;
+            z-index: 50;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .chapter-info.show {
+            opacity: 1;
+        }
+
+        .loading-placeholder {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            font-size: 1.2rem;
+            color: #555;
+        }
+
+        /* تنسيقات منع النسخ والتحديد */
+        #viewer * {
+            -webkit-user-select: none !important;
+            -moz-user-select: none !important;
+            -ms-user-select: none !important;
+            user-select: none !important;
+            -webkit-touch-callout: none !important;
+        }
+        #viewer ::selection { background: transparent; }
+        #viewer ::-moz-selection { background: transparent; }
+
+        #viewer img {
+            max-width: 100%;             
+            height: auto;                
+            display: block;              
+            margin: 20px auto;              
+            object-fit: contain;
+            box-sizing: border-box;
+            page-break-inside: avoid;
+            break-inside: avoid;
+        }
+
+        #viewer figure {
+            margin: 20px 0;
+            text-align: center;
+            page-break-inside: avoid;
+            break-inside: avoid;
+        }
+
+        #viewer figcaption {
+            margin-top: 10px;
+            font-style: italic;
+            color: #666;
+        }
+
+        /* تحسينات خاصة لوضع التمرير */
+        #viewer.scrolled-mode {
+            overflow-y: auto;
+            overflow-x: hidden;
+        }
+
+        #viewer.scrolled-mode iframe {
+            width: 100% !important;
+            height: auto !important;
+            min-height: 100vh;
+            border: none;
+        }
+
+        #viewer.scrolled-mode iframe body {
+            width: 100% !important;
+            max-width: 100% !important;
+            margin: 0 !important;
+            padding: 20px !important;
+            box-sizing: border-box !important;
+        }
+
+        #viewer.scrolled-mode iframe img {
+            max-width: 100% !important;
+            width: 100% !important;
+            height: auto !important;
+            display: block !important;
+            margin: 20px auto !important;
+        }
+
+        .error-message {
+            text-align: center;
+            padding: 40px 20px;
+            color: #e74c3c;
+        }
+
+        .retry-btn {
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin-top: 20px;
+            font-size: 16px;
+        }
+
+        @media (max-width: 768px) {
+            .header-controls {
+                gap: 5px;
+            }
+            .control-btn {
+                padding: 7px 12px;
+                font-size: 14px;
+            }
+            .nav-arrow {
+                width: 50px;
+                height: 50px;
+                padding: 12px;
+            }
+            .file-label {
+                padding: 8px 15px;
+                font-size: 14px;
+            }
+            .toc-container {
+                width: 250px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            #header {
+                padding: 0 10px;
+                gap: 8px;
+            }
+            #bookTitle {
+                font-size: 16px;
+                max-width: 150px;
+            }
+            .font-controls {
+                display: none;
+            }
+            .footer-nav {
+                gap: 15px;
+            }
+            .toc-container {
+                width: 85%;
+            }
+            .control-btn span {
+                display: none;
+            }
+            .control-btn {
+                min-width: 36px;
+                padding: 6px;
+            }
+            .file-label span {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body class="rtl">
+    <div id="header">
+        <div id="bookTitle">قارئ الكتب الإلكترونية</div>
+        <div class="header-controls">
+            <button class="control-btn" id="tocBtn" title="جدول المحتويات">
+                <span>📋 المحتويات</span>
+            </button>
+            <div class="font-controls">
+                <button class="control-btn" id="decreaseFontBtn" title="تصغير الخط">
+                    <span>A-</span>
+                </button>
+                <button class="control-btn" id="increaseFontBtn" title="تكبير الخط">
+                    <span>A+</span>
+                </button>
+            </div>
+            <button class="control-btn" id="modeToggle" title="تبديل وضع العرض">
+                <span id="modeText">📖 تقسيم الصفحات</span>
+            </button>
+            <label for="fileInput" class="file-label">
+                <span>📂 فتح كتاب</span>
+            </label>
+            <input type="file" id="fileInput" accept=".epub" />
+        </div>
+    </div>
+
+    <!-- TOC Container -->
+    <div class="toc-container" id="tocContainer"></div>
+    <div class="overlay" id="tocOverlay"></div>
+    
+    <div class="viewer-container">
+        <div id="viewer"></div>
+        <div class="chapter-info"></div>
+    </div>
+
+    <div id="footer">
+        <div class="footer-content">
+            <div class="footer-nav">
+                <button class="nav-arrow" id="prevBtn" data-tooltip="الصفحة السابقة">→</button>
+                <button class="nav-arrow" id="nextBtn" data-tooltip="الصفحة التالية">←</button>
+            </div>
+        </div>
+    </div>
+    
+    <div class="progress-container" id="progressContainer">
+        <div class="progress-text">جاري تحميل الكتاب...</div>
+        <div class="progress-bar">
+            <div class="progress-fill" id="progressFill"></div>
+        </div>
+        <div class="progress-percent" id="progressPercent">0%</div>
+    </div>
+
+    <div class="status-bar" id="statusBar">تم التحميل بنجاح!</div>
+    
+    <script>
+        // Global variables
+        let book, rendition, fadeTimeout;
+        let currentBookBuffer = null;
+        let currentFontSize = 100;
+        let currentViewMode = 'paginated';
+        let isRtl = false;
+        let currentChapter = "";
+        let bookToc = [];
+        let isTocVisible = false;
+
+        // DOM Helper
+        function $(id) {
+            return document.getElementById(id);
+        }
+
+        // Progress Functions
+        function showProgress() {
+            const el = $('progressContainer');
+            if (el) el.style.display = 'block';
+        }
+
+        function hideProgress() {
+            const el = $('progressContainer');
+            if (el) el.style.display = 'none';
+        }
+
+        function updateProgress(percent) {
+            const clamped = Math.min(Math.max(percent, 0), 100);
+            const bar = $('progressFill');
+            const label = $('progressPercent');
+
+            if (bar) bar.style.width = `${clamped}%`;
+            if (label) label.textContent = `${Math.round(clamped)}%`;
+        }
+
+        // Status Functions
+        function showStatus(message, duration = 3000) {
+            const statusBar = $('statusBar');
+            if (!statusBar) return;
+
+            statusBar.textContent = message;
+            statusBar.classList.add('show');
+            clearTimeout(statusBar.timeoutId);
+            statusBar.timeoutId = setTimeout(() => {
+                statusBar.classList.remove('show');
+            }, duration);
+        }
+
+        function showChapterInfo(chapterName) {
+            const chapterInfo = document.querySelector('.chapter-info');
+            if (!chapterInfo) return;
+            
+            chapterInfo.textContent = chapterName;
+            chapterInfo.classList.add('show');
+            
+            setTimeout(() => {
+                chapterInfo.classList.remove('show');
+            }, 2000);
+        }
+
+        // RTL Detection
+        function isRTLText(text) {
+            if (typeof text !== 'string') return false;
+            const rtlPattern = /[\u0590-\u05FF\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/g;
+            const matches = text.match(rtlPattern);
+            const totalChars = text.replace(/\s/g, '').length;
+            return matches && (matches.length / totalChars) > 0.3;
+        }
+
+        // Book Handling
+        async function openBook(buffer) {
+            const loadingTimeout = setTimeout(() => {
+                console.error("Book loading timeout - taking too long");
+                displayError("استغرق تحميل الكتاب وقتاً طويلاً. يرجى المحاولة مرة أخرى.");
+                hideProgress();
+            }, 30000); // 30 second timeout
+
+            try {
+                showProgress();
+                updateProgress(0);
+
+                // Clean up previous instances
+                if (rendition) {
+                    rendition.destroy();
+                    rendition = null;
+                }
+                if (book) {
+                    book.destroy();
+                    book = null;
+                }
+
+                // Clear viewer and reset state
+                const viewer = $('viewer');
+                viewer.innerHTML = '<div class="loading-placeholder">جاري إعداد الكتاب...</div>';
+                bookToc = [];
+                renderToc([]);
+                
+                // Clear loading message after a short delay
+                setTimeout(() => {
+                    const loadingPlaceholder = viewer.querySelector('.loading-placeholder');
+                    if (loadingPlaceholder) {
+                        loadingPlaceholder.style.opacity = '0';
+                        setTimeout(() => {
+                            loadingPlaceholder.remove();
+                        }, 300);
+                    }
+                }, 1000);
+
+                if (typeof ePub === 'undefined') {
+                    throw new Error('مكتبة EPUB.js غير محملة. يرجى التحقق من الاتصال بالإنترنت وإعادة تحميل الصفحة.');
+                }
+
+                // Validate that we have a buffer
+                if (!buffer || buffer.byteLength === 0) {
+                    throw new Error('الملف فارغ أو غير صالح');
+                }
+
+                console.log("Buffer size:", buffer.byteLength, "bytes");
+
+                // Check if file is a valid ZIP/EPUB (starts with PK signature)
+                const uint8Array = new Uint8Array(buffer.slice(0, 4));
+                const signature = Array.from(uint8Array).map(b => String.fromCharCode(b)).join('');
+                console.log("File signature:", signature);
+                
+                if (signature !== 'PK\x03\x04' && signature !== 'PK\x05\x06' && signature !== 'PK\x07\x08') {
+                    throw new Error('الملف ليس بتنسيق EPUB صالح. تأكد من أن الملف هو ملف EPUB صحيح.');
+                }
+
+                // Load book with error handling
+                updateProgress(10);
+                console.log("Creating blob and loading book...");
+                
+                // Create blob with proper MIME type
+                const blob = new Blob([buffer], { type: "application/epub+zip" });
+                const blobUrl = URL.createObjectURL(blob);
+                
+                updateProgress(20);
+                console.log("Creating EPUB instance...");
+                
+                // Try different approaches to load the EPUB
+                let bookCreated = false;
+                
+                // First, try to validate the EPUB structure using JSZip
+                try {
+                    console.log("Validating EPUB structure with JSZip...");
+                    const zip = new JSZip();
+                    await zip.loadAsync(buffer);
+                    
+                    // Check if META-INF/container.xml exists
+                    const containerFile = zip.file("META-INF/container.xml");
+                    if (!containerFile) {
+                        console.warn("META-INF/container.xml not found, but continuing...");
+                    } else {
+                        console.log("META-INF/container.xml found");
+                    }
+                    
+                    // Check for other essential files
+                    const files = Object.keys(zip.files);
+                    console.log("EPUB files found:", files.length);
+                    
+                    if (files.length < 3) {
+                        throw new Error('الملف يحتوي على عدد قليل جداً من الملفات - قد يكون تالفاً');
+                    }
+                    
+                    console.log("EPUB structure validated successfully");
+                } catch (zipError) {
+                    console.error("EPUB validation failed:", zipError);
+                    // Don't throw error, just log and continue
+                    console.warn("Continuing despite validation issues...");
+                }
+                
+                try {
+                    console.log("Trying to create EPUB directly from buffer...");
+                    book = ePub(buffer);
+                    bookCreated = true;
+                } catch (e) {
+                    console.error("Error creating EPUB from buffer:", e);
+                    try {
+                        console.log("Trying to create EPUB from blob URL...");
+                        book = ePub(blobUrl);
+                        bookCreated = true;
+                    } catch (e2) {
+                        console.error("Error creating EPUB from blob URL:", e2);
+                        // Try creating a data URL as last resort
+                        try {
+                            console.log("Trying to create EPUB from data URL...");
+                            const base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+                            const dataUrl = `data:application/epub+zip;base64,${base64}`;
+                            book = ePub(dataUrl);
+                            bookCreated = true;
+                        } catch (e3) {
+                            console.error("Error creating EPUB from data URL:", e3);
+                            // Try one more approach - create a temporary file
+                            try {
+                                console.log("Trying to create EPUB with different options...");
+                                book = ePub(buffer, { openAs: "epub" });
+                                bookCreated = true;
+                            } catch (e4) {
+                                console.error("All EPUB creation methods failed:", e4);
+                                throw new Error('فشل في تحميل ملف EPUB. تأكد من أن الملف صالح وغير تالف.');
+                            }
+                        }
+                    }
+                }
+                
+                if (!bookCreated) {
+                    throw new Error('فشل في إنشاء مثيل الكتاب');
+                }
+                
+                updateProgress(30);
+                console.log("Waiting for book to be ready...");
+                try {
+                    // Add timeout for book.ready
+                    const readyPromise = book.ready;
+                    const timeoutPromise = new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('انتهت مهلة انتظار تحميل الكتاب')), 15000)
+                    );
+                    
+                    await Promise.race([readyPromise, timeoutPromise]);
+                    console.log("Book is ready");
+                } catch (readyError) {
+                    console.error("Error waiting for book to be ready:", readyError);
+                    // Try to get more specific error information
+                    if (readyError.message && readyError.message.includes('container.xml')) {
+                        throw new Error('الملف لا يحتوي على بنية EPUB صحيحة. تأكد من أن الملف هو ملف EPUB صالح.');
+                    } else if (readyError.message && readyError.message.includes('404')) {
+                        throw new Error('الملف تالف أو غير مكتمل. تأكد من أن الملف تم تحميله بشكل صحيح.');
+                    } else {
+                        throw new Error(`فشل في تحميل الكتاب: ${readyError.message}`);
+                    }
+                }
+
+                // Load metadata
+                updateProgress(50);
+                console.log("Loading metadata...");
+                let metadata = {};
+                try {
+                    metadata = await book.loaded.metadata;
+                    console.log("Metadata loaded:", metadata);
+                } catch (e) {
+                    console.error("Error loading metadata:", e);
+                    metadata = {};
+                }
+
+                // Determine text direction
+                updateProgress(70);
+                const lang = (metadata.language || "").toLowerCase().trim();
+                const rtlLangs = ["ar", "he", "fa", "ur", "sd", "ps", "ug", "yi", "arc", "dv", "ku", "bal"];
+                isRtl = rtlLangs.includes(lang) || isRTLText(metadata.title || '') || isRTLText(metadata.description || '');
+
+                document.body.classList.toggle('rtl', isRtl);
+                document.documentElement.setAttribute("dir", isRtl ? "rtl" : "ltr");
+                
+                // Force RTL for Arabic content
+                if (isRtl) {
+                    document.body.style.direction = 'rtl';
+                    document.body.style.textAlign = 'right';
+                }
+
+                // Setup rendition
+                updateProgress(80);
+                console.log("Setting up rendition...");
+                const options = {
+                    width: "100%",
+                    height: "100%",
+                    allowScriptedContent: true,
+                    manager: currentViewMode === 'scrolled' ? "continuous" : "default",
+                    flow: currentViewMode === 'scrolled' ? "scrolled-doc" : "paginated",
+                    spread: currentViewMode === 'scrolled' ? "none" : "auto",
+                    minSpreadWidth: currentViewMode === 'paginated' ? 800 : 0,
+                    // إعدادات إضافية لتحسين عرض الصور في وضع التمرير
+                    contained: currentViewMode === 'scrolled',
+                    infinite: currentViewMode === 'scrolled'
+                };
+
+                rendition = book.renderTo("viewer", options);
+                if (isRtl) rendition.direction("rtl");
+                
+                // تطبيق الإعدادات
+                applyCurrentSettings();
+                
+                // إعدادات خاصة لوضع التمرير مع الصور
+                if (currentViewMode === 'scrolled') {
+                    setupScrolledModeForImages();
+                }
+
+                // Load table of contents
+                updateProgress(90);
+                console.log("Loading table of contents...");
+                try {
+                    const navigation = await book.loaded.navigation;
+                    bookToc = navigation.toc || [];
+                    console.log("TOC loaded:", bookToc.length, "items");
+                } catch (e) {
+                    console.error("Error loading TOC:", e);
+                    bookToc = [];
+                }
+                
+                // Display book
+                updateProgress(95);
+                console.log("Displaying book...");
+                await rendition.display();
+                
+                // في وضع التمرير، تأكد من تحميل جميع المحتوى
+                if (currentViewMode === 'scrolled') {
+                    try {
+                        // محاولة تحميل المزيد من المحتوى
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                        console.log("Ensuring all content is loaded in scrolled mode...");
+                        
+                        // إعادة تطبيق الأنماط بعد التحميل
+                        if (rendition) {
+                            rendition.themes.fontSize(`${currentFontSize}%`);
+                        }
+                    } catch (e) {
+                        console.warn("Error ensuring content load:", e);
+                    }
+                }
+                
+                renderToc(bookToc);
+
+                // Setup UI
+                updateProgress(100);
+                setupBookUI(metadata);
+                updateChapterInfo();
+                
+                // إعداد واجهة المستخدم للكتاب
+                setupUIForBook();
+
+                console.log("Book loaded successfully");
+                clearTimeout(loadingTimeout);
+                setTimeout(hideProgress, 500);
+
+            } catch (err) {
+                console.error("خطأ في تحميل الكتاب:", err);
+                console.error("Error details:", err.message, err.stack);
+                displayError(`حدث خطأ أثناء تحميل الكتاب: ${err.message}`);
+                hideProgress();
+            } finally {
+                clearTimeout(loadingTimeout);
+                // Clean up blob URL to prevent memory leaks
+                if (typeof blobUrl !== 'undefined') {
+                    URL.revokeObjectURL(blobUrl);
+                }
+                currentBookBuffer = buffer;
+            }
+        }
+
+        function displayError(msg) {
+            const viewer = document.getElementById('viewer');
+            if (viewer) {
+                viewer.innerHTML = `
+                    <div class="error-message">
+                        <h3>حدث خطأ</h3>
+                        <p>${msg}</p>
+                        <p style="font-size: 12px; color: #666; margin-top: 10px;">
+                            تأكد من أن الملف صالح وأنه بتنسيق EPUB صحيح
+                        </p>
+                        <p style="font-size: 11px; color: #999; margin-top: 5px;">
+                            إذا استمرت المشكلة، جرب ملف EPUB آخر
+                        </p>
+                        <button class="retry-btn" onclick="location.reload()">إعادة المحاولة</button>
+                        <button class="retry-btn" onclick="hideProgress()" style="margin-left: 10px; background: #95a5a6;">إغلاق</button>
+                    </div>
+                `;
+            }
+            hideProgress();
+        }
+
+        function updateChapterInfo() {
+            if (!rendition) return;
+            
+            try {
+                const location = rendition.currentLocation();
+                if (location && location.start) {
+                    currentChapter = location.start.display || "";
+                    showChapterInfo(currentChapter);
+                }
+            } catch (err) {
+                console.warn("Couldn't get current location:", err);
+            }
+        }
+
+        // TOC Functions
+        function renderToc(toc) {
+            const tocContainer = $('tocContainer');
+            if (!tocContainer) return;
+            
+            tocContainer.innerHTML = '';
+            
+            if (!toc || toc.length === 0) {
+                tocContainer.innerHTML = '<p>لا يوجد جدول محتويات</p>';
+                return;
+            }
+            
+            const renderItems = (items, level = 0) => {
+                return items.map(item => `
+                    <div class="toc-item" data-href="${item.href}" style="padding-left: ${level * 15}px">
+                        ${item.label}
+                        ${item.subitems && item.subitems.length > 0 ? 
+                         `<div>${renderItems(item.subitems, level + 1)}</div>` : ''}
+                    </div>
+                `).join('');
+            };
+            
+            tocContainer.innerHTML = '<h3>جدول المحتويات</h3>' + renderItems(toc);
+            
+            // Add event listeners
+            tocContainer.querySelectorAll('.toc-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const href = item.getAttribute('data-href');
+                    if (href && rendition) {
+                        rendition.display(href);
+                        hideToc();
+                        resetFadeTimer();
+                        setTimeout(updateChapterInfo, 500);
+                    }
+                });
+            });
+        }
+
+        function toggleToc() {
+            if (isTocVisible) {
+                hideToc();
+            } else {
+                showToc();
+            }
+        }
+
+        function showToc() {
+            const tocContainer = $('tocContainer');
+            const overlay = $('tocOverlay');
+            if (!tocContainer || !overlay) return;
+            
+            tocContainer.classList.add('show');
+            overlay.classList.add('show');
+            overlay.onclick = hideToc;
+            isTocVisible = true;
+            resetFadeTimer();
+        }
+
+        function hideToc() {
+            const tocContainer = $('tocContainer');
+            const overlay = $('tocOverlay');
+            if (!tocContainer || !overlay) return;
+            
+            tocContainer.classList.remove('show');
+            overlay.classList.remove('show');
+            isTocVisible = false;
+            resetFadeTimer();
+        }
+
+        // Navigation Functions
+        function next() {
+            if (!rendition) return;
+            rendition.next();
+            updateChapterInfo();
+            resetFadeTimer();
+        }
+
+        function prev() {
+            if (!rendition) return;
+            rendition.prev();
+            updateChapterInfo();
+            resetFadeTimer();
+        }
+
+        function updateArrowIcons() {
+            const prevBtn = $('prevBtn');
+            const nextBtn = $('nextBtn');
+
+            if (!prevBtn || !nextBtn) return;
+
+            // الأسهم تكون ثابتة حسب اتجاه القراءة، وليس حسب اللغة
+            // السهم الأيسر دائماً للصفحة السابقة، والسهم الأيمن للصفحة التالية
+            prevBtn.innerHTML = '←';
+            nextBtn.innerHTML = '→';
+        }
+
+        // دالة لتطبيق الإعدادات الحالية
+        function applyCurrentSettings() {
+            if (!rendition) return;
+            
+            // تطبيق حجم الخط
+            rendition.themes.fontSize(`${currentFontSize}%`);
+            
+            // تطبيق اتجاه النص
+            if (isRtl) {
+                rendition.direction("rtl");
+                rendition.themes.default({
+                    "body": {
+                        "direction": "rtl !important",
+                        "text-align": "right !important"
+                    },
+                    "p, div, span, h1, h2, h3, h4, h5, h6": {
+                        "direction": "rtl !important",
+                        "text-align": "right !important"
+                    }
+                });
+            }
+        }
+
+        // دالة لإعداد وضع التمرير للكتب التي تحتوي على صور
+        function setupScrolledModeForImages() {
+            if (!rendition || currentViewMode !== 'scrolled') return;
+            
+            // إعدادات خاصة للصور في وضع التمرير
+            rendition.themes.default({
+                "body": {
+                    "max-width": "100%",
+                    "width": "100%",
+                    "margin": "0",
+                    "padding": "20px",
+                    "line-height": "1.8",
+                    "font-size": "16px",
+                    "text-align": isRtl ? "right" : "left",
+                    "direction": isRtl ? "rtl" : "ltr",
+                    "box-sizing": "border-box"
+                },
+                "img": {
+                    "max-width": "100%",
+                    "width": "100%",
+                    "height": "auto",
+                    "display": "block",
+                    "margin": "20px auto",
+                    "object-fit": "contain",
+                    "box-sizing": "border-box"
+                },
+                "figure": {
+                    "margin": "20px 0",
+                    "text-align": "center",
+                    "width": "100%",
+                    "max-width": "100%"
+                },
+                "figcaption": {
+                    "margin-top": "10px",
+                    "font-style": "italic",
+                    "color": "#666"
+                },
+                "p, div, h1, h2, h3, h4, h5, h6": {
+                    "max-width": "100%",
+                    "width": "100%",
+                    "margin": "10px 0",
+                    "padding": "0",
+                    "box-sizing": "border-box"
+                }
+            });
+
+            // إضافة event listener لتحميل الصور
+            rendition.on("rendered", (section) => {
+                try {
+                    const doc = section.document;
+                    const images = doc.querySelectorAll('img');
+                    
+                    images.forEach(img => {
+                        // إزالة أي قيود على حجم الصورة
+                        img.style.maxWidth = '100%';
+                        img.style.height = 'auto';
+                        img.style.display = 'block';
+                        img.style.margin = '20px auto';
+                        
+                        // إضافة event listener لتحميل الصورة
+                        img.addEventListener('load', () => {
+                            console.log('Image loaded:', img.src);
+                        });
+                        
+                        img.addEventListener('error', () => {
+                            console.warn('Image failed to load:', img.src);
+                        });
+                    });
+                } catch (e) {
+                    console.warn("Error setting up images:", e);
+                }
+            });
+
+            // إضافة event listener لتحميل المزيد من المحتوى عند التمرير
+            const viewer = $('viewer');
+            if (viewer) {
+                viewer.addEventListener('scroll', () => {
+                    const scrollPercentage = (viewer.scrollTop / (viewer.scrollHeight - viewer.clientHeight)) * 100;
+                    
+                    // إذا وصل المستخدم إلى 80% من المحتوى، قم بتحميل المزيد
+                    if (scrollPercentage > 80) {
+                        console.log('Loading more content...');
+                        // محاولة تحميل المزيد من المحتوى
+                        try {
+                            if (rendition && rendition.manager && typeof rendition.manager.next === 'function') {
+                                rendition.manager.next();
+                            }
+                        } catch (e) {
+                            console.warn('Could not load more content:', e);
+                        }
+                    }
+                });
+            }
+
+            // إضافة event listener لتحميل جميع المحتوى عند بدء التمرير
+            setTimeout(() => {
+                try {
+                    console.log('Pre-loading content for scrolled mode...');
+                    // محاولة تحميل المزيد من المحتوى مسبقاً
+                    if (rendition && rendition.manager && typeof rendition.manager.next === 'function') {
+                        // تحميل عدة صفحات مسبقاً
+                        for (let i = 0; i < 3; i++) {
+                            setTimeout(() => {
+                                try {
+                                    rendition.manager.next();
+                                } catch (e) {
+                                    // تجاهل الأخطاء بعد تحميل جميع المحتوى
+                                }
+                            }, i * 1000);
+                        }
+                    }
+                } catch (e) {
+                    console.warn('Error pre-loading content:', e);
+                }
+            }, 3000);
+        }
+
+        // Font Functions
+        function changeFontSize(action) {
+            if (!rendition) return;
+            
+            // تغيير حجم الخط بنسبة 10%
+            if (action === 'increase') {
+                currentFontSize = Math.min(currentFontSize + 10, 200); // الحد الأقصى 200%
+            } else {
+                currentFontSize = Math.max(currentFontSize - 10, 50); // الحد الأدنى 50%
+            }
+
+            // تطبيق حجم الخط الجديد
+            rendition.themes.fontSize(`${currentFontSize}%`);
+            showStatus(`حجم الخط: ${currentFontSize}%`);
+        }
+
+        // View Mode Functions
+        async function toggleViewMode() {
+            if (!book) return; // لا تفعل شيئاً إذا لم يكن هناك كتاب
+
+            const prevMode = currentViewMode;
+            currentViewMode = currentViewMode === 'paginated' ? 'scrolled' : 'paginated';
+            
+            // حفظ الموقع الحالي
+            const currentLocation = rendition ? rendition.location?.start?.cfi : null;
+
+            try {
+                // تدمير العارض القديم
+                if (rendition) {
+                    rendition.destroy();
+                }
+
+                // إنشاء العارض الجديد بالإعدادات الصحيحة
+                const options = {
+                    width: "100%",
+                    height: "100%",
+                    allowScriptedContent: true,
+                    manager: currentViewMode === 'scrolled' ? "continuous" : "default",
+                    flow: currentViewMode === 'scrolled' ? "scrolled-doc" : "paginated",
+                    spread: currentViewMode === 'scrolled' ? "none" : "auto",
+                    minSpreadWidth: currentViewMode === 'paginated' ? 800 : 0,
+                    // إعدادات إضافية لتحسين عرض الصور في وضع التمرير
+                    contained: currentViewMode === 'scrolled',
+                    infinite: currentViewMode === 'scrolled'
+                };
+
+                rendition = book.renderTo("viewer", options);
+                if (isRtl) rendition.direction("rtl");
+
+                // تطبيق الإعدادات
+                applyCurrentSettings();
+                
+                // إعدادات خاصة لوضع التمرير مع الصور
+                if (currentViewMode === 'scrolled') {
+                    setupScrolledModeForImages();
+                }
+
+                // عرض الكتاب من نفس المكان
+                await rendition.display(currentLocation || undefined);
+
+                // تحديث واجهة المستخدم
+                updateUIAfterModeChange();
+                showStatus(`وضع القراءة: ${currentViewMode === 'scrolled' ? 'التمرير' : 'تقسيم الصفحات'}`);
+
+            } catch (err) {
+                console.error("Error switching mode:", err);
+                currentViewMode = prevMode;
+                showStatus("خطأ في تغيير وضع القراءة");
+            }
+        }
+
+        function updateUIAfterModeChange() {
+            const mode = $('modeText');
+            if (mode) mode.textContent = currentViewMode === 'scrolled' ? '📜 التمرير' : '📖 تقسيم الصفحات';
+
+            const footer = $('footer');
+            
+            // Show/hide footer based on mode
+            if (currentViewMode === 'scrolled') {
+                footer.style.display = 'none';
+                document.removeEventListener('mousemove', resetFadeTimer);
+            } else {
+                footer.style.display = 'flex';
+                document.addEventListener('mousemove', resetFadeTimer);
+                resetFadeTimer(); // إظهار الفوتر فوراً
+            }
+
+            // Update viewer container styles
+            const viewer = $('viewer');
+            if (viewer) {
+                if (currentViewMode === 'scrolled') {
+                    viewer.style.overflow = 'auto';
+                    viewer.style.height = '100%';
+                    viewer.style.width = '100%';
+                    viewer.classList.add('scrolled-mode');
+                } else {
+                    viewer.style.overflow = 'hidden';
+                    viewer.style.height = '100%';
+                    viewer.style.width = '100%';
+                    viewer.classList.remove('scrolled-mode');
+                }
+            }
+        }
+
+        // UI Setup
+        function setupBookUI(metadata) {
+            updateArrowIcons();
+            if (!rendition) return;
+            
+                    // Set up iframe sandbox attributes safely
+        try {
+            const iframe = document.querySelector('#viewer iframe');
+            if (iframe) {
+                // Allow scripts but with proper security settings
+                iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts');
+                iframe.setAttribute('allow', 'fullscreen');
+                
+                // Add event listener to handle iframe load
+                iframe.addEventListener('load', () => {
+                    try {
+                        const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+                        if (iframeDoc) {
+                            iframeDoc.documentElement.style.direction = isRtl ? 'rtl' : 'ltr';
+                            iframeDoc.body.style.direction = isRtl ? 'rtl' : 'ltr';
+                        }
+                    } catch (e) {
+                        // Cross-origin restrictions, ignore
+                    }
+                });
+            }
+        } catch (e) {
+            console.warn("Could not set iframe sandbox:", e);
+        }
+            
+            rendition.on("rendered", (section) => {
+                try {
+                    const doc = section.document.documentElement;
+                    const body = section.document.body;
+
+                    if (!doc || !body) return;
+
+                    // Prevent selection
+                    ['contextmenu', 'copy', 'selectstart', 'dragstart'].forEach(evt =>
+                        doc.addEventListener(evt, e => e.preventDefault())
+                    );
+
+                    // Force full height and margin reset
+                    doc.style.height = '100%';
+                    doc.style.margin = '0';
+                    body.style.margin = '0';
+                    body.style.height = '100vh';
+
+                    // Set direction
+                    doc.dir = isRtl ? 'rtl' : 'ltr';
+                    body.dir = isRtl ? 'rtl' : 'ltr';
+                    body.style.textAlign = isRtl ? 'right' : 'left';
+                    body.style.direction = isRtl ? 'rtl' : 'ltr';
+                    
+                    // Apply different styles based on view mode
+                    if (currentViewMode === 'scrolled') {
+                        body.style.maxWidth = '100%';
+                        body.style.width = '100%';
+                        body.style.margin = '0';
+                        body.style.padding = '20px';
+                        body.style.lineHeight = '1.8';
+                        body.style.fontSize = '16px';
+                        body.style.textAlign = isRtl ? 'right' : 'left';
+                        body.style.direction = isRtl ? 'rtl' : 'ltr';
+                        body.style.minHeight = '100vh';
+                        body.style.boxSizing = 'border-box';
+                        
+                        // تحسين عرض الصور في وضع التمرير
+                        const images = body.querySelectorAll('img');
+                        images.forEach(img => {
+                            img.style.maxWidth = '100%';
+                            img.style.width = '100%';
+                            img.style.height = 'auto';
+                            img.style.display = 'block';
+                            img.style.margin = '20px auto';
+                            img.style.objectFit = 'contain';
+                        });
+                        
+                        // تحسين عرض النص
+                        const paragraphs = body.querySelectorAll('p, div, h1, h2, h3, h4, h5, h6');
+                        paragraphs.forEach(p => {
+                            p.style.maxWidth = '100%';
+                            p.style.width = '100%';
+                            p.style.margin = '10px 0';
+                            p.style.padding = '0';
+                        });
+                    } else {
+                        body.style.maxWidth = 'none';
+                        body.style.margin = '0';
+                        body.style.padding = '1em';
+                        body.style.textAlign = isRtl ? 'right' : 'left';
+                        body.style.direction = isRtl ? 'rtl' : 'ltr';
+                    }
+                    
+                    // منع النسخ والتحديد
+                    body.style.cssText += 'user-select: none !important; -webkit-user-select: none !important;';
+                    
+                    // Remove loading placeholder from iframe
+                    const loadingPlaceholder = body.querySelector('.loading-placeholder');
+                    if (loadingPlaceholder) {
+                        loadingPlaceholder.remove();
+                    }
+                    
+                    setTimeout(updateChapterInfo, 100);
+                } catch (e) {
+                    console.warn("Error in rendered event:", e);
+                }
+            });
+
+            rendition.on('relocated', (location) => {
+                currentChapter = location.start.display || "";
+                showChapterInfo(currentChapter);
+                resetFadeTimer();
+            });
+
+            // Update book title
+            const titleEl = $('bookTitle');
+            if (titleEl && metadata.title) {
+                titleEl.textContent = metadata.title;
+            }
+
+            // Apply current font size
+            changeFontSize(''); // This will apply current size without changing it
+        }
+
+        // UI Visibility Functions
+        function setupUIForBook() {
+            const footer = $('footer');
+            if (currentViewMode === 'scrolled') {
+                footer.style.display = 'none';
+                document.removeEventListener('mousemove', resetFadeTimer);
+            } else {
+                footer.style.display = 'flex';
+                document.addEventListener('mousemove', resetFadeTimer);
+            }
+        }
+
+        function startFadeTimer() {
+            clearTimeout(fadeTimeout);
+            if (currentViewMode === 'paginated' && !isTocVisible) {
+                fadeTimeout = setTimeout(() => $('footer')?.classList.add('fade-out'), 3000);
+            }
+        }
+
+        function resetFadeTimer() {
+            clearTimeout(fadeTimeout);
+            $('footer')?.classList.remove('fade-out');
+            startFadeTimer();
+        }
+
+        // Touch Navigation
+        function initTouchNavigation() {
+            const viewer = $('viewer');
+            if (!viewer) return;
+
+            let startX = 0, startY = 0;
+            viewer.addEventListener('touchstart', e => {
+                const t = e.changedTouches[0];
+                startX = t.screenX;
+                startY = t.screenY;
+            }, { passive: true });
+
+            viewer.addEventListener('touchend', e => {
+                const t = e.changedTouches[0];
+                const dx = startX - t.screenX;
+                const dy = Math.abs(startY - t.screenY);
+
+                if (Math.abs(dx) > 50 && dy < Math.abs(dx) * 2) {
+                    if (currentViewMode === 'paginated') {
+                        // التنقل يكون ثابتاً: السحب لليسار = الصفحة التالية، السحب لليمين = الصفحة السابقة
+                        dx > 0 ? next() : prev();
+                    } else if (currentViewMode === 'scrolled' && Math.abs(dx) > 100) {
+                        // In scrolled mode, use larger threshold and scroll instead of page navigation
+                        const viewer = $('viewer');
+                        if (viewer) {
+                            const scrollAmount = 300;
+                            if (dx > 0) {
+                                viewer.scrollTop += scrollAmount;
+                            } else {
+                                viewer.scrollTop -= scrollAmount;
+                            }
+                        }
+                    }
+                }
+            }, { passive: true });
+        }
+
+        // Keyboard Navigation
+        function initKeyboardNavigation() {
+            document.addEventListener('keydown', e => {
+                if (!rendition) return;
+                
+                if (['ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End'].includes(e.key)) {
+                    e.preventDefault();
+                }
+
+                if (currentViewMode === 'paginated') {
+                    // التنقل يكون ثابتاً: السهم الأيسر = الصفحة السابقة، السهم الأيمن = الصفحة التالية
+                    if (['ArrowLeft', 'PageUp'].includes(e.key)) {
+                        prev();
+                    } else if (['ArrowRight', 'PageDown'].includes(e.key)) {
+                        next();
+                    }
+                } else {
+                    // Scrolled mode - use scroll instead of page navigation
+                    const viewer = $('viewer');
+                    if (viewer) {
+                        const scrollAmount = 100;
+                        if (['ArrowLeft', 'PageUp'].includes(e.key)) {
+                            viewer.scrollTop -= scrollAmount;
+                        } else if (['ArrowRight', 'PageDown'].includes(e.key)) {
+                            viewer.scrollTop += scrollAmount;
+                        } else if (e.key === 'Home') {
+                            viewer.scrollTop = 0;
+                        } else if (e.key === 'End') {
+                            viewer.scrollTop = viewer.scrollHeight;
+                        }
+                    }
+                }
+            });
+        }
+
+        // File Input
+        function initFileInput() {
+            const input = $("fileInput");
+            if (!input) return;
+
+            input.addEventListener("change", function (event) {
+                const file = event.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = function (e) {
+                    const arrayBuffer = e.target.result;
+                    openBook(arrayBuffer);
+                };
+                reader.readAsArrayBuffer(file);
+            });
+        }
+
+        // Initialization
+        function init() {
+            initFileInput();
+            initTouchNavigation();
+            initKeyboardNavigation();
+            updateUIAfterModeChange();
+            hideProgress();
+            
+            // Remove any duplicate tooltips
+            document.querySelectorAll('[title]').forEach(el => {
+                if (el.hasAttribute('data-tooltip')) {
+                    el.removeAttribute('title');
+                }
+            });
+            
+            // Add event listeners
+            $('tocBtn').addEventListener('click', toggleToc);
+            $('decreaseFontBtn').addEventListener('click', () => changeFontSize('decrease'));
+            $('increaseFontBtn').addEventListener('click', () => changeFontSize('increase'));
+            $('modeToggle').addEventListener('click', toggleViewMode);
+            $('prevBtn').addEventListener('click', prev);
+            $('nextBtn').addEventListener('click', next);
+            
+            document.addEventListener('mousemove', resetFadeTimer);
+            window.addEventListener('resize', () => {
+                if (rendition) {
+                    setTimeout(() => rendition.resize(), 100);
+                }
+            });
+
+            // تعزيز منع النسخ واللصق
+            function preventCopyPaste(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                return false;
+            }
+
+            // تطبيق منع النسخ على المحتوى الداخلي للـ iframe
+            function applyProtection() {
+                const viewer = document.getElementById('viewer');
+                const frame = viewer.querySelector('iframe');
+                if (frame && frame.contentDocument) {
+                    frame.contentDocument.addEventListener('copy', preventCopyPaste, true);
+                    frame.contentDocument.addEventListener('cut', preventCopyPaste, true);
+                    frame.contentDocument.addEventListener('paste', preventCopyPaste, true);
+                    frame.contentDocument.addEventListener('contextmenu', preventCopyPaste, true);
+                    frame.contentDocument.addEventListener('selectstart', function(e) {
+                        e.preventDefault();
+                        return false;
+                    }, true);
+                    
+                    // تطبيق منع النسخ على كل العناصر داخل الـ iframe
+                    frame.contentDocument.body.style.webkitUserSelect = 'none';
+                    frame.contentDocument.body.style.mozUserSelect = 'none';
+                    frame.contentDocument.body.style.msUserSelect = 'none';
+                    frame.contentDocument.body.style.userSelect = 'none';
+                }
+            }
+
+            // تطبيق الحماية على العنصر الرئيسي
+            document.getElementById('viewer').addEventListener('copy', preventCopyPaste, true);
+            document.getElementById('viewer').addEventListener('cut', preventCopyPaste, true);
+            document.getElementById('viewer').addEventListener('paste', preventCopyPaste, true);
+            document.getElementById('viewer').addEventListener('contextmenu', preventCopyPaste, true);
+        }
+
+        // Start the application
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
+
+        // Suppress iframe security warnings
+        const originalWarn = console.warn;
+        console.warn = function(...args) {
+            if (args[0] && typeof args[0] === 'string' && 
+                (args[0].includes('iframe') || 
+                 args[0].includes('sandbox') || 
+                 args[0].includes('allow-scripts') ||
+                 args[0].includes('escape its sandboxing'))) {
+                return; // Suppress iframe sandbox warnings
+            }
+            originalWarn.apply(console, args);
+        };
+
+        // Also suppress specific iframe errors
+        const originalError = console.error;
+        console.error = function(...args) {
+            if (args[0] && typeof args[0] === 'string' && 
+                (args[0].includes('Blocked script execution') ||
+                 args[0].includes('about:srcdoc'))) {
+                return; // Suppress blocked script execution errors
+            }
+            originalError.apply(console, args);
+        };
+    </script>
+</body>
+</html>
